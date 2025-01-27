@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chat with QuickHelp</title>
+  <link
+    href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.3/dist/tailwind.min.css"
+    rel="stylesheet"
+  />
+  <!-- Font Awesome for Icons -->
+  <link
+    rel="stylesheet"
+    href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"
+  />
+  <!-- Custom CSS for Floating Text -->
+  <style>
+    @keyframes float {
+      0%, 100% {
+        transform: translateY(0);
+      }
+      50% {
+        transform: translateY(-10px);
+      }
+    }
+    .floating-text {
+      animation: float 3s ease-in-out infinite;
+    }
+    .chat-container {
+      border: 2px solid #3b82f6; /* Blue border */
+      border-radius: 12px; /* Rounded corners */
+      overflow: hidden; /* Ensures the border-radius is applied */
+    }
+    .history-sidebar {
+      width: 300px;
+      height: 100vh;
+      position: fixed;
+      top: 0;
+      left: -300px;
+      background-color: white;
+      box-shadow: 2px 0 5px rgba(0, 0, 0, 0.1);
+      transition: left 0.3s ease;
+      z-index: 1000;
+    }
+    .history-sidebar.open {
+      left: 0;
+    }
+    .overlay {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0, 0, 0, 0.5);
+      z-index: 999;
+    }
+    .overlay.active {
+      display: block;
+    }
+  </style>
+</head>
+<body class="bg-gray-100 flex flex-col min-h-screen">
+  <!-- History Icon -->
+  <div class="fixed top-4 left-4 z-50">
+    <button
+      id="historyButton"
+      class="p-2 bg-blue-500 hover:bg-blue-600 text-white rounded-full"
+    >
+      <i class="fas fa-history"></i>
+    </button>
+  </div>
+
+  <!-- History Sidebar -->
+  <div id="historySidebar" class="history-sidebar">
+    <div class="p-4 border-b border-gray-200">
+      <h2 class="text-lg font-bold">Chat History</h2>
+    </div>
+    <div id="historyContent" class="p-4 overflow-y-auto"></div>
+  </div>
+
+  <!-- Overlay for Sidebar -->
+  <div id="overlay" class="overlay"></div>
+
+  <!-- Chat Container -->
+  <div class="flex-grow container mx-auto py-6 px-4">
+    <div class="h-full w-full max-w-2xl mx-auto">
+      <!-- Chatbot Name -->
+      <div class="text-center mb-4">
+        <h1 class="text-3xl font-bold text-blue-600 floating-text">QuickHelp</h1>
+      </div>
+      <!-- Chatbox with Border -->
+      <div class="chat-container">
+        <div id="chatbox" class="flex flex-col items-start overflow-y-auto h-[60vh] p-4 bg-white"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Input Section -->
+  <div class="sticky bottom-0 w-full bg-gray-100 py-4">
+    <div class="flex justify-center">
+      <div class="px-2 w-full max-w-2xl">
+        <div class="flex flex-col space-y-2">
+          <!-- Input and Icons -->
+          <div class="flex items-center space-x-2">
+            <!-- Upload File Icon -->
+            <input
+              type="file"
+              id="fileInput"
+              class="hidden"
+            />
+            <button
+              id="uploadButton"
+              class="p-2 bg-gray-200 hover:bg-gray-300 rounded-full"
+            >
+              <i class="fas fa-paperclip text-gray-600"></i>
+            </button>
+            <!-- Microphone Icon -->
+            <button
+              id="micButton"
+              class="p-2 bg-gray-200 hover:bg-gray-300 rounded-full"
+            >
+              <i class="fas fa-microphone text-gray-600"></i>
+            </button>
+            <!-- Message Input -->
+            <input
+              class="flex-grow p-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              id="messageInput"
+              type="text"
+              placeholder="Type your message"
+            />
+            <!-- Send Button -->
+            <button
+              id="sendButton"
+              class="p-2 bg-blue-500 hover:bg-blue-600 text-white rounded-full"
+            >
+              <i class="fas fa-paper-plane"></i>
+            </button>
+          </div>
+          <!-- File Upload Message Input (Hidden by Default) -->
+          <div id="fileMessageContainer" class="hidden">
+            <input
+              class="w-full p-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              id="fileMessageInput"
+              type="text"
+              placeholder="Add a message about the file"
+            />
+            <button
+              id="sendFileButton"
+              class="mt-2 p-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg w-full"
+            >
+              Send File with Message
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const chatbox = document.getElementById("chatbox");
+    const messageInput = document.getElementById("messageInput");
+    const sendButton = document.getElementById("sendButton");
+    const uploadButton = document.getElementById("uploadButton");
+    const fileInput = document.getElementById("fileInput");
+    const micButton = document.getElementById("micButton");
+    const fileMessageContainer = document.getElementById("fileMessageContainer");
+    const fileMessageInput = document.getElementById("fileMessageInput");
+    const sendFileButton = document.getElementById("sendFileButton");
+    const historyButton = document.getElementById("historyButton");
+    const historySidebar = document.getElementById("historySidebar");
+    const historyContent = document.getElementById("historyContent");
+    const overlay = document.getElementById("overlay");
+    const chatId = crypto.randomUUID();
+    let websocket = null;
+
+    let receiving = false;
+    let isListening = false;
+    let recognition = null;
+    let chatHistory = []; // Array to store chat history
+
+    // Change the main chatbot prompt here
+    const systemPrompt = "You are QuickHelp, a helpful chatbot. Your creator is MD MASUD RANA, a computer science student. When asked about the creator or the website, respond with 'This website and chatbot were created by MD MASUD RANA, A 21-year-old computer science graduate from Thakurgaon Polytechnic Institute with 3 years of expertise in web development (HTML, CSS, JS, React, Node.js, MongoDB, SQL) and digital marketing. Fluent in Chinese, MD MASUD RANA blends technical skills with global communication, poised to make a mark in tech and digital innovation.'";
+
+    // A function to create a message element based on the text and alignment
+    function createMessageElement(text, alignment) {
+      const messageElement = document.createElement("div");
+      messageElement.className = `inline-block my-2.5 p-2.5 rounded-lg max-w-[80%] ${
+        alignment === "left" ? "self-start bg-gray-200" : "self-end bg-blue-500 text-white"
+      }`;
+      messageElement.textContent = text;
+      return messageElement;
+    }
+
+    // A function to add a message to the chat history
+    function addToHistory(message, isUser) {
+      chatHistory.push({ text: message, isUser });
+      updateHistoryUI();
+    }
+
+    // A function to update the history sidebar UI
+    function updateHistoryUI() {
+      historyContent.innerHTML = ""; // Clear existing content
+      chatHistory.forEach((entry) => {
+        const historyItem = document.createElement("div");
+        historyItem.className = `mb-2 p-2 rounded-lg ${
+          entry.isUser ? "bg-blue-100 text-right" : "bg-gray-100 text-left"
+        }`;
+        historyItem.textContent = entry.text;
+        historyContent.appendChild(historyItem);
+      });
+    }
+
+    // A function to connect to the WebSocket server and send/receive messages
+    function connectWebSocket(message, initChat) {
+      receiving = true;
+      sendButton.innerHTML = '<i class="fas fa-times"></i>';
+      const url = "wss://backend.buildpicoapps.com/api/chatbot/chat";
+      websocket = new WebSocket(url);
+
+      websocket.addEventListener("open", () => {
+        websocket.send(
+          JSON.stringify({
+            chatId: chatId,
+            appId: "toward-some",
+            systemPrompt: systemPrompt,
+            message: initChat ? "Welcome to QuickHelp! How can I assist you today?" : message,
+          })
+        );
+      });
+
+      const messageElement = createMessageElement("", "left");
+      chatbox.appendChild(messageElement);
+
+      websocket.onmessage = (event) => {
+        messageElement.textContent += event.data;
+        chatbox.scrollTop = chatbox.scrollHeight;
+        if (!initChat) {
+          addToHistory(event.data, false); // Add bot response to history
+        }
+      };
+
+      websocket.onclose = (event) => {
+        if (event.code === 1000) {
+          receiving = false;
+          sendButton.innerHTML = '<i class="fas fa-paper-plane"></i>';
+        } else {
+          messageElement.textContent += "Error getting response from server. Refresh the page and try again.";
+          chatbox.scrollTop = chatbox.scrollHeight;
+          receiving = false;
+          sendButton.innerHTML = '<i class="fas fa-paper-plane"></i>';
+        }
+      };
+    }
+
+    // A function to create a welcome message when the chat starts
+    function createWelcomeMessage() {
+        connectWebSocket("", true);
+    }
+
+    // Speech Recognition Setup
+    function setupSpeechRecognition() {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) {
+        alert("Speech recognition is not supported in your browser.");
+        return;
+      }
+
+      recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.lang = "en-US";
+
+      recognition.onstart = () => {
+        isListening = true;
+        micButton.innerHTML = '<i class="fas fa-microphone-slash"></i>';
+      };
+
+      recognition.onend = () => {
+        isListening = false;
+        micButton.innerHTML = '<i class="fas fa-microphone"></i>';
+      };
+
+      recognition.onresult = (event) => {
+        const transcript = event.results[0][0].transcript;
+        messageInput.value = transcript;
+      };
+
+      recognition.onerror = (event) => {
+        console.error("Speech recognition error:", event.error);
+        alert("Speech recognition error: " + event.error);
+      };
+    }
+
+    // Event listeners
+    sendButton.addEventListener("click", () => {
+      if (!receiving && messageInput.value.trim() !== "") {
+        const messageText = messageInput.value.trim();
+        messageInput.value = "";
+        const messageElement = createMessageElement(messageText, "right");
+        chatbox.appendChild(messageElement);
+        chatbox.scrollTop = chatbox.scrollHeight;
+
+        addToHistory(messageText, true); // Add user message to history
+        connectWebSocket(messageText, false);
+      } else if (receiving && websocket) {
+        websocket.close(1000);
+        receiving = false;
+        sendButton.innerHTML = '<i class="fas fa-paper-plane"></i>';
+      }
+    });
+
+    messageInput.addEventListener("keydown", (event) => {
+      if (
+        event.key === "Enter" &&
+        !receiving &&
+        messageInput.value.trim() !== ""
+      ) {
+        event.preventDefault();
+        sendButton.click();
+      }
+    });
+
+    uploadButton.addEventListener("click", () => {
+      fileInput.click();
+    });
+
+    fileInput.addEventListener("change", (event) => {
+      const file = event.target.files[0];
+      if (file) {
+        // Show the file message input and send button
+        fileMessageContainer.classList.remove("hidden");
+      }
+    });
+
+    sendFileButton.addEventListener("click", () => {
+      const file = fileInput.files[0];
+      const fileMessage = fileMessageInput.value.trim();
+      if (file) {
+        const messageText = fileMessage ? `${fileMessage} (File: ${file.name})` : `File uploaded: ${file.name}`;
+        const messageElement = createMessageElement(messageText, "right");
+        chatbox.appendChild(messageElement);
+        chatbox.scrollTop = chatbox.scrollHeight;
+
+        addToHistory(messageText, true); // Add file upload message to history
+
+        // Reset file input and hide the message container
+        fileInput.value = "";
+        fileMessageInput.value = "";
+        fileMessageContainer.classList.add("hidden");
+
+        // Send the file message to the server (if needed)
+        connectWebSocket(messageText, false);
+      }
+    });
+
+    micButton.addEventListener("click", () => {
+      if (!isListening) {
+        setupSpeechRecognition();
+        recognition.start();
+      } else {
+        recognition.stop();
+      }
+    });
+
+    // Toggle history sidebar
+    historyButton.addEventListener("click", () => {
+      historySidebar.classList.toggle("open");
+      overlay.classList.toggle("active");
+    });
+
+    // Close sidebar when clicking outside
+    overlay.addEventListener("click", () => {
+      historySidebar.classList.remove("open");
+      overlay.classList.remove("active");
+    });
+
+    createWelcomeMessage();
+  </script>
+</body>
+</html>
